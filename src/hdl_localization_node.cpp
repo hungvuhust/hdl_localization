@@ -20,13 +20,13 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
   if (use_imu_) {
     RCLCPP_INFO(this->get_logger(), "enable imu-based prediction");
     imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-        "/gpsimu_driver/imu_data", 256,
+        imu_topic_, 256,
         std::bind(&HdlLocalizationNode::imu_callback, this,
                   std::placeholders::_1));
   }
 
   points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-      "/velodyne_points", 5,
+      points_topic_, 5,
       std::bind(&HdlLocalizationNode::points_callback, this,
                 std::placeholders::_1));
 
@@ -50,7 +50,7 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
 
   // global localization
   use_global_localization_ =
-      this->declare_parameter<bool>("use_global_localization", true);
+      this->get_parameter("use_global_localization").as_bool();
   if (use_global_localization_) {
     RCLCPP_INFO(this->get_logger(), "wait for global localization services");
 
@@ -68,7 +68,14 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
 }
 
 pcl::Registration<HdlLocalizationNode::PointT, HdlLocalizationNode::PointT>::Ptr
-HdlLocalizationNode::create_registration() const {
+HdlLocalizationNode::create_registration() {
+
+  reg_method_ = this->get_parameter("reg_method").as_string();
+  ndt_neighbor_search_method_ =
+      this->get_parameter("ndt_neighbor_search_method").as_string();
+  ndt_neighbor_search_radius_ =
+      this->get_parameter("ndt_neighbor_search_radius").as_double();
+  ndt_resolution_ = this->get_parameter("ndt_resolution").as_double();
 
   if (reg_method_ == "NDT_OMP") {
     RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
@@ -131,9 +138,36 @@ HdlLocalizationNode::create_registration() const {
 }
 //
 void HdlLocalizationNode::initialize_params() {
+  this->declare_parameter<std::string>("reg_method", "NDT_CUDA");
+  this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT1");
+  this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
+  this->declare_parameter<double>("ndt_resolution", 1.0);
+  this->declare_parameter<double>("downsample_resolution", 0.1);
+  this->declare_parameter<bool>("specify_init_pose", true);
+  this->declare_parameter<double>("init_pos_x", 0.0);
+  this->declare_parameter<double>("init_pos_y", 0.0);
+  this->declare_parameter<double>("init_pos_z", 0.0);
+  this->declare_parameter<double>("init_ori_w", 1.0);
+  this->declare_parameter<double>("init_ori_x", 0.0);
+  this->declare_parameter<double>("init_ori_y", 0.0);
+  this->declare_parameter<double>("init_ori_z", 0.0);
+  this->declare_parameter<std::string>("points_topic", "/livox/lidar");
+  this->declare_parameter<std::string>("imu_topic", "/livox/imu");
+  this->declare_parameter<bool>("use_global_localization", true);
+  this->declare_parameter<bool>("enable_robot_odometry_prediction", false);
+  this->declare_parameter<double>("cool_time_duration", 0.5);
+  this->declare_parameter<double>("status_max_correspondence_dist", 0.5);
+  this->declare_parameter<double>("status_max_valid_point_dist", 25.0);
+
+  // initialize parameters
+  RCLCPP_INFO(this->get_logger(), "--------------------------------");
+  RCLCPP_INFO(this->get_logger(), "HDL Localization Node Parameters:");
+  RCLCPP_INFO(this->get_logger(), "--------------------------------");
+
   // initialize scan matching method
   double downsample_resolution =
-      this->declare_parameter<double>("downsample_resolution", 0.1);
+      this->get_parameter("downsample_resolution").as_double();
+
   pcl::VoxelGrid<PointT>::Ptr voxelgrid(new pcl::VoxelGrid<PointT>());
   voxelgrid->setLeafSize(downsample_resolution, downsample_resolution,
                          downsample_resolution);
@@ -149,28 +183,49 @@ void HdlLocalizationNode::initialize_params() {
   relocalizing_ = false;
   delta_estimater_.reset(new DeltaEstimater(create_registration()));
 
+  points_topic_ = this->get_parameter("points_topic").as_string();
+  imu_topic_    = this->get_parameter("imu_topic").as_string();
+
   // initialize pose estimator
-  if (this->declare_parameter<bool>("specify_init_pose", true)) {
+  if (this->get_parameter("specify_init_pose").as_bool()) {
     RCLCPP_INFO(this->get_logger(),
                 "initialize pose estimator with specified parameters!!");
     pose_estimator_.reset(new hdl_localization::PoseEstimator(
         registration_,
-        Eigen::Vector3f(this->declare_parameter<double>("init_pos_x", 0.0),
-                        this->declare_parameter<double>("init_pos_y", 0.0),
-                        this->declare_parameter<double>("init_pos_z", 0.0)),
-        Eigen::Quaternionf(this->declare_parameter<double>("init_ori_w", 1.0),
-                           this->declare_parameter<double>("init_ori_x", 0.0),
-                           this->declare_parameter<double>("init_ori_y", 0.0),
-                           this->declare_parameter<double>("init_ori_z", 0.0)),
-        this->declare_parameter<double>("cool_time_duration", 0.5)));
+        Eigen::Vector3f(this->get_parameter("init_pos_x").as_double(),
+                        this->get_parameter("init_pos_y").as_double(),
+                        this->get_parameter("init_pos_z").as_double()),
+        Eigen::Quaternionf(this->get_parameter("init_ori_w").as_double(),
+                           this->get_parameter("init_ori_x").as_double(),
+                           this->get_parameter("init_ori_y").as_double(),
+                           this->get_parameter("init_ori_z").as_double()),
+        this->get_parameter("cool_time_duration").as_double()));
   }
 
-  reg_method_ = this->declare_parameter<std::string>("reg_method", "NDT_OMP");
-  ndt_neighbor_search_method_ = this->declare_parameter<std::string>(
-      "ndt_neighbor_search_method", "DIRECT7");
-  ndt_neighbor_search_radius_ =
-      this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
-  ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
+  // Log the parameters
+  RCLCPP_INFO(this->get_logger(), "--------------------------------");
+  RCLCPP_INFO(this->get_logger(), "HDL Localization Node Parameters:");
+  RCLCPP_INFO(this->get_logger(), "--------------------------------");
+  RCLCPP_INFO(this->get_logger(), "robot_odom_frame_id: %s",
+              robot_odom_frame_id_.c_str());
+  RCLCPP_INFO(this->get_logger(), "odom_child_frame_id: %s",
+              odom_child_frame_id_.c_str());
+  RCLCPP_INFO(this->get_logger(), "use_imu: %s", use_imu_ ? "true" : "false");
+  RCLCPP_INFO(this->get_logger(), "invert_acc: %s",
+              invert_acc_ ? "true" : "false");
+  RCLCPP_INFO(this->get_logger(), "invert_gyro: %s",
+              invert_gyro_ ? "true" : "false");
+  RCLCPP_INFO(this->get_logger(), "points_topic: %s", points_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(), "imu_topic: %s", imu_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(), "reg_method: %s", reg_method_.c_str());
+  RCLCPP_INFO(this->get_logger(), "ndt_neighbor_search_method: %s",
+              ndt_neighbor_search_method_.c_str());
+  RCLCPP_INFO(this->get_logger(), "ndt_neighbor_search_radius: %f",
+              ndt_neighbor_search_radius_);
+  RCLCPP_INFO(this->get_logger(), "ndt_resolution: %f", ndt_resolution_);
+  RCLCPP_INFO(this->get_logger(), "downsample_resolution: %f",
+              downsample_resolution);
+  RCLCPP_INFO(this->get_logger(), "--------------------------------");
 }
 
 void HdlLocalizationNode::imu_callback(
@@ -250,8 +305,7 @@ void HdlLocalizationNode::points_callback(
 
   // odometry-based prediction
   rclcpp::Time last_correction_time = pose_estimator_->last_correction_time();
-  if (this->declare_parameter<bool>("enable_robot_odometry_prediction",
-                                    false) &&
+  if (this->get_parameter("enable_robot_odometry_prediction").as_bool() &&
       last_correction_time.nanoseconds() != 0) {
     geometry_msgs::msg::TransformStamped odom_delta;
     if (tf_buffer_.canTransform(
@@ -313,14 +367,16 @@ void HdlLocalizationNode::globalmap_callback(
         std::make_shared<hdl_global_localization::srv::SetGlobalMap::Request>();
     pcl::toROSMsg(*globalmap_, request->global_map);
 
-    auto result_future = set_global_map_client_->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-                                           result_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      RCLCPP_INFO(this->get_logger(), "failed to set global map");
-    } else {
-      RCLCPP_INFO(this->get_logger(), "done");
-    }
+    set_global_map_client_->async_send_request(
+        request,
+        [this](rclcpp::Client<hdl_global_localization::srv::SetGlobalMap>::
+                   SharedFuture future) {
+          if (future.valid()) {
+            RCLCPP_INFO(this->get_logger(), "done");
+          } else {
+            RCLCPP_ERROR(this->get_logger(), "failed to set global map");
+          }
+        });
   }
 }
 
@@ -329,6 +385,11 @@ bool HdlLocalizationNode::relocalize(
     std::shared_ptr<std_srvs::srv::Empty::Response> /*res*/) {
   if (!last_scan_) {
     RCLCPP_INFO_STREAM(this->get_logger(), "no scan has been received");
+    return false;
+  }
+
+  if (!use_global_localization_) {
+    RCLCPP_INFO_STREAM(this->get_logger(), "global localization is disabled");
     return false;
   }
 
@@ -341,18 +402,24 @@ bool HdlLocalizationNode::relocalize(
   pcl::toROSMsg(*scan, request->cloud);
   request->max_num_candidates = 1;
 
-  auto result_future =
-      query_global_localization_client_->async_send_request(request);
-  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-                                         result_future) !=
-          rclcpp::FutureReturnCode::SUCCESS ||
-      result_future.get()->poses.empty()) {
+  auto future = query_global_localization_client_->async_send_request(request);
+
+  // Wait for result with timeout
+  if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
     relocalizing_ = false;
-    RCLCPP_INFO_STREAM(this->get_logger(), "global localization failed");
+    RCLCPP_INFO_STREAM(this->get_logger(), "global localization timeout");
     return false;
   }
 
-  const auto &result = result_future.get()->poses[0];
+  auto response = future.get();
+  if (!response || response->poses.empty()) {
+    relocalizing_ = false;
+    RCLCPP_INFO_STREAM(this->get_logger(),
+                       "global localization failed: no poses returned");
+    return false;
+  }
+
+  const auto &result = response->poses[0];
 
   RCLCPP_INFO_STREAM(this->get_logger(), "--- Global localization result ---");
   RCLCPP_INFO_STREAM(this->get_logger(), "Trans :" << result.position.x << " "
@@ -362,10 +429,6 @@ bool HdlLocalizationNode::relocalize(
       this->get_logger(),
       "Quat  :" << result.orientation.x << " " << result.orientation.y << " "
                 << result.orientation.z << " " << result.orientation.w);
-  RCLCPP_INFO_STREAM(this->get_logger(),
-                     "Error :" << result_future.get()->errors[0]);
-  RCLCPP_INFO_STREAM(this->get_logger(),
-                     "Inlier:" << result_future.get()->inlier_fractions[0]);
 
   Eigen::Isometry3f pose = Eigen::Isometry3f::Identity();
   pose.linear() = Eigen::Quaternionf(result.orientation.w, result.orientation.x,
@@ -381,7 +444,6 @@ bool HdlLocalizationNode::relocalize(
       this->declare_parameter<double>("cool_time_duration", 0.5)));
 
   relocalizing_ = false;
-
   return true;
 }
 

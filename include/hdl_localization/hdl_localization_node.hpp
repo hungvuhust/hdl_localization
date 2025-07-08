@@ -38,10 +38,11 @@ class HdlLocalizationNode : public rclcpp::Node {
 public:
   using PointT = pcl::PointXYZI;
 
-  explicit HdlLocalizationNode(const rclcpp::NodeOptions &options);
+  explicit HdlLocalizationNode(
+      const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
 private:
-  pcl::Registration<PointT, PointT>::Ptr create_registration() const;
+  pcl::Registration<PointT, PointT>::Ptr create_registration();
   void                                   initialize_params();
 
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr imu_msg);
@@ -71,9 +72,11 @@ private:
   std::string robot_odom_frame_id_;
   std::string odom_child_frame_id_;
 
-  bool                                                           use_imu_;
-  bool                                                           invert_acc_;
-  bool                                                           invert_gyro_;
+  bool        use_imu_;
+  bool        invert_acc_;
+  bool        invert_gyro_;
+  std::string points_topic_{"/livox/lidar"};
+  std::string imu_topic_{"/livox/imu"};
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr         imu_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr globalmap_sub_;

@@ -18,6 +18,8 @@ GlobalmapServerNode::GlobalmapServerNode(const rclcpp::NodeOptions &options)
   globalmap_pub_timer_ = this->create_wall_timer(
       std::chrono::seconds(1),
       std::bind(&GlobalmapServerNode::pub_once_cb, this));
+
+  RCLCPP_INFO(this->get_logger(), "GlobalmapServerNode initialized");
 }
 
 void GlobalmapServerNode::initialize_params() {
@@ -25,7 +27,14 @@ void GlobalmapServerNode::initialize_params() {
   std::string globalmap_pcd =
       this->declare_parameter<std::string>("globalmap_pcd", "");
   globalmap_.reset(new pcl::PointCloud<PointT>());
-  pcl::io::loadPCDFile(globalmap_pcd, *globalmap_);
+
+  if (globalmap_pcd.find(".ply") != std::string::npos) {
+    RCLCPP_INFO(this->get_logger(), "Loading globalmap from ply file");
+    pcl::io::loadPLYFile(globalmap_pcd, *globalmap_);
+  } else {
+    RCLCPP_INFO(this->get_logger(), "Loading globalmap from pcd file");
+    pcl::io::loadPCDFile(globalmap_pcd, *globalmap_);
+  }
   globalmap_->header.frame_id = "map";
 
   std::ifstream utm_file(globalmap_pcd + ".utm");
@@ -64,6 +73,9 @@ void GlobalmapServerNode::pub_once_cb() {
   auto message = std::make_shared<sensor_msgs::msg::PointCloud2>();
   pcl::toROSMsg(*globalmap_, *message);
   message->header.frame_id = globalmap_->header.frame_id;
+  RCLCPP_INFO(this->get_logger(), "Publishing globalmap");
+  RCLCPP_INFO(this->get_logger(), "Number of points: %ld",
+              globalmap_->points.size());
   globalmap_pub_->publish(*message);
   globalmap_pub_timer_->cancel(); // Only publish once at startup
 }

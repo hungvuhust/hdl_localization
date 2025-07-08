@@ -40,6 +40,6 @@ hdl_localization_node:
 
 globalmap_server_node:
   ros__parameters:
-    globalmap_pcd: map.pcd
+    globalmap_pcd: /home/rtc/ros2_ws/map/mapmoi/mapmoi.ply
     convert_utm_to_local: true
     downsample_resolution: 0.1

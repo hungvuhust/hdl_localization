@@ -13,6 +13,7 @@
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/io/ply_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 namespace hdl_localization {
@@ -21,7 +22,8 @@ class GlobalmapServerNode : public rclcpp::Node {
 public:
   using PointT = pcl::PointXYZI;
 
-  explicit GlobalmapServerNode(const rclcpp::NodeOptions &options);
+  explicit GlobalmapServerNode(
+      const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
 private:
   void initialize_params();

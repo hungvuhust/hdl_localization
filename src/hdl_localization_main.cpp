@@ -14,17 +14,11 @@ int main(int argc, char *argv[]) {
               "Starting HDL Localization main executable");
 
   try {
-    // Create both component instances with proper node names for parameter loading
-    rclcpp::NodeOptions globalmap_options = options;
-    globalmap_options.arguments({"--ros-args", "--remap", "__node:=globalmap_server_node"});
-    
-    rclcpp::NodeOptions localization_options = options;
-    localization_options.arguments({"--ros-args", "--remap", "__node:=hdl_localization_node"});
-    
+
     auto globalmap_node =
-        std::make_shared<hdl_localization::GlobalmapServerNode>(globalmap_options);
+        std::make_shared<hdl_localization::GlobalmapServerNode>(options);
     auto localization_node =
-        std::make_shared<hdl_localization::HdlLocalizationNode>(localization_options);
+        std::make_shared<hdl_localization::HdlLocalizationNode>(options);
 
     // Add both nodes to executor
     executor.add_node(globalmap_node);
