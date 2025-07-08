@@ -28,6 +28,7 @@
 #include <hdl_localization/delta_estimater.hpp>
 #include <hdl_localization/pose_estimator.hpp>
 
+#include "../utils/service_client.hpp"
 #include <hdl_global_localization/srv/query_global_localization.hpp>
 #include <hdl_global_localization/srv/set_global_map.hpp>
 #include <hdl_localization/msg/scan_matching_status.hpp>
@@ -62,6 +63,8 @@ private:
       const pcl::PointCloud<PointT>::ConstPtr &aligned);
 
 private:
+  rclcpp::Node::SharedPtr node_;
+
   // Registration parameters
   mutable std::string reg_method_;
   mutable std::string ndt_neighbor_search_method_;
@@ -113,10 +116,13 @@ private:
 
   pcl::PointCloud<PointT>::ConstPtr                last_scan_;
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr relocalize_server_;
-  rclcpp::Client<hdl_global_localization::srv::SetGlobalMap>::SharedPtr
+
+  utils::ServiceClient<hdl_global_localization::srv::SetGlobalMap>::Ptr
       set_global_map_client_;
-  rclcpp::Client<hdl_global_localization::srv::QueryGlobalLocalization>::
-      SharedPtr query_global_localization_client_;
+  utils::ServiceClient<hdl_global_localization::srv::QueryGlobalLocalization>::
+      Ptr query_global_localization_client_;
+
+  std::shared_ptr<std::thread> client_thread_;
 };
 
 } // namespace hdl_localization

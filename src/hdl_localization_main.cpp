@@ -14,7 +14,6 @@ int main(int argc, char *argv[]) {
               "Starting HDL Localization main executable");
 
   try {
-
     auto globalmap_node =
         std::make_shared<hdl_localization::GlobalmapServerNode>(options);
     auto localization_node =
@@ -23,7 +22,6 @@ int main(int argc, char *argv[]) {
     // Add both nodes to executor
     executor.add_node(globalmap_node);
     executor.add_node(localization_node);
-
     RCLCPP_INFO(rclcpp::get_logger("main"),
                 "Both components started successfully");
 

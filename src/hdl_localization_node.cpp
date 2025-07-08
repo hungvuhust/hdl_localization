@@ -6,6 +6,7 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
     : Node("hdl_localization_node", options), tf_buffer_(this->get_clock()),
       tf_listener_(tf_buffer_), tf_broadcaster_(this) {
 
+  node_ = std::make_shared<rclcpp::Node>("hdl_localization_node_cli");
   initialize_params();
 
   robot_odom_frame_id_ =
@@ -54,17 +55,23 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
   if (use_global_localization_) {
     RCLCPP_INFO(this->get_logger(), "wait for global localization services");
 
-    set_global_map_client_ =
-        this->create_client<hdl_global_localization::srv::SetGlobalMap>(
-            "/hdl_global_localization/set_global_map");
-    query_global_localization_client_ = this->create_client<
-        hdl_global_localization::srv::QueryGlobalLocalization>(
-        "/hdl_global_localization/query");
+    set_global_map_client_ = std::make_shared<
+        utils::ServiceClient<hdl_global_localization::srv::SetGlobalMap>>(
+        "/hdl_global_localization/set_global_map", node_);
+    query_global_localization_client_ = std::make_shared<utils::ServiceClient<
+        hdl_global_localization::srv::QueryGlobalLocalization>>(
+        "/hdl_global_localization/query", node_);
 
-    relocalize_server_ = this->create_service<std_srvs::srv::Empty>(
+    relocalize_server_ = node_->create_service<std_srvs::srv::Empty>(
         "/relocalize", std::bind(&HdlLocalizationNode::relocalize, this,
                                  std::placeholders::_1, std::placeholders::_2));
   }
+
+  client_thread_ = std::make_shared<std::thread>([this]() {
+    rclcpp::spin(node_);
+    RCLCPP_INFO(this->get_logger(), "client thread exited");
+  });
+  client_thread_->detach();
 }
 
 pcl::Registration<HdlLocalizationNode::PointT, HdlLocalizationNode::PointT>::Ptr
@@ -367,16 +374,36 @@ void HdlLocalizationNode::globalmap_callback(
         std::make_shared<hdl_global_localization::srv::SetGlobalMap::Request>();
     pcl::toROSMsg(*globalmap_, request->global_map);
 
-    set_global_map_client_->async_send_request(
-        request,
-        [this](rclcpp::Client<hdl_global_localization::srv::SetGlobalMap>::
-                   SharedFuture future) {
-          if (future.valid()) {
-            RCLCPP_INFO(this->get_logger(), "done");
-          } else {
-            RCLCPP_ERROR(this->get_logger(), "failed to set global map");
-          }
-        });
+    // auto callback =
+    //     [&](rclcpp::Client<hdl_global_localization::srv::SetGlobalMap>::
+    //             SharedFuture response_future) {
+    //       try {
+    //         auto response = response_future.get();
+    //         RCLCPP_INFO(this->get_logger(), "global map set successfully");
+    //       } catch (const std::exception &e) {
+    //         RCLCPP_ERROR(this->get_logger(), "failed to set global map");
+    //       }
+    //       response_received.store(true);
+    //     };
+
+    // auto future = set_global_map_client_->async_send_request(request,
+    // callback); auto start_time = std::chrono::steady_clock::now(); while
+    // (!response_received.load()) {
+    //   if (std::chrono::steady_clock::now() - start_time >
+    //       std::chrono::seconds(15)) {
+    //     RCLCPP_ERROR(this->get_logger(), "Service call timeout");
+    //     return;
+    //   }
+    //   std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // }
+
+    auto response =
+        set_global_map_client_->invoke(request, std::chrono::seconds(15));
+    if (!response) {
+      RCLCPP_ERROR(this->get_logger(), "failed to set global map");
+      return;
+    }
+    RCLCPP_INFO(this->get_logger(), "global map set successfully");
   }
 }
 
@@ -402,23 +429,15 @@ bool HdlLocalizationNode::relocalize(
   pcl::toROSMsg(*scan, request->cloud);
   request->max_num_candidates = 1;
 
-  auto future = query_global_localization_client_->async_send_request(request);
+  RCLCPP_INFO_STREAM(this->get_logger(), "querying global localization");
 
-  // Wait for result with timeout
-  if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
-    relocalizing_ = false;
-    RCLCPP_INFO_STREAM(this->get_logger(), "global localization timeout");
+  auto response = query_global_localization_client_->invoke(
+      request, std::chrono::seconds(15));
+  if (!response) {
+    RCLCPP_ERROR(this->get_logger(),
+                 "failed to get global localization result");
     return false;
   }
-
-  auto response = future.get();
-  if (!response || response->poses.empty()) {
-    relocalizing_ = false;
-    RCLCPP_INFO_STREAM(this->get_logger(),
-                       "global localization failed: no poses returned");
-    return false;
-  }
-
   const auto &result = response->poses[0];
 
   RCLCPP_INFO_STREAM(this->get_logger(), "--- Global localization result ---");
@@ -441,7 +460,7 @@ bool HdlLocalizationNode::relocalize(
   std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
   pose_estimator_.reset(new hdl_localization::PoseEstimator(
       registration_, pose.translation(), Eigen::Quaternionf(pose.linear()),
-      this->declare_parameter<double>("cool_time_duration", 0.5)));
+      this->get_parameter("cool_time_duration").as_double()));
 
   relocalizing_ = false;
   return true;
@@ -456,7 +475,7 @@ void HdlLocalizationNode::initialpose_callback(
   pose_estimator_.reset(new hdl_localization::PoseEstimator(
       registration_, Eigen::Vector3f(p.x, p.y, p.z),
       Eigen::Quaternionf(q.w, q.x, q.y, q.z),
-      this->declare_parameter<double>("cool_time_duration", 0.5)));
+      this->get_parameter("cool_time_duration").as_double()));
 }
 
 void HdlLocalizationNode::publish_scan_matching_status(
@@ -469,9 +488,9 @@ void HdlLocalizationNode::publish_scan_matching_status(
   status.matching_error = 0.0;
 
   const double max_correspondence_dist =
-      this->declare_parameter<double>("status_max_correspondence_dist", 0.5);
+      this->get_parameter("status_max_correspondence_dist").as_double();
   const double max_valid_point_dist =
-      this->declare_parameter<double>("status_max_valid_point_dist", 25.0);
+      this->get_parameter("status_max_valid_point_dist").as_double();
 
   int                num_inliers      = 0;
   int                num_valid_points = 0;
