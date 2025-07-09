@@ -1,4 +1,8 @@
 #include "hdl_localization/hdl_localization_node.hpp"
+#include "fast_gicp/gicp/fast_gicp.hpp"
+#include "fast_gicp/gicp/fast_vgicp.hpp"
+#include "rclcpp/callback_group.hpp"
+#include <rclcpp/qos.hpp>
 
 namespace hdl_localization {
 
@@ -38,7 +42,7 @@ HdlLocalizationNode::HdlLocalizationNode(const rclcpp::NodeOptions &options)
 
   initialpose_sub_ =
       this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-          "/initialpose", 8,
+          "/initialpose", rclcpp::QoS(10),
           std::bind(&HdlLocalizationNode::initialpose_callback, this,
                     std::placeholders::_1));
 
@@ -110,7 +114,7 @@ HdlLocalizationNode::create_registration() {
 #if 0
   else if (reg_method_.find("NDT_CUDA") != std::string::npos) {
     RCLCPP_INFO(this->get_logger(), "NDT_CUDA is selected");
-    boost::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(
+    std::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(
         new fast_gicp::NDTCuda<PointT, PointT>);
     ndt->setResolution(ndt_resolution_);
 
@@ -139,6 +143,33 @@ HdlLocalizationNode::create_registration() {
     return ndt;
   }
 #endif
+  else if (reg_method_.find("VGICP") != std::string::npos) {
+    RCLCPP_INFO(this->get_logger(), "VGICP is selected");
+    std::shared_ptr<fast_gicp::FastVGICP<PointT, PointT>> ndt(
+        new fast_gicp::FastVGICP<PointT, PointT>);
+    ndt->setResolution(ndt_resolution_);
+
+    if (ndt_neighbor_search_method_ == "DIRECT1") {
+      RCLCPP_INFO(this->get_logger(), "search_method DIRECT1 is selected");
+      ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT1);
+    } else if (ndt_neighbor_search_method_ == "DIRECT7") {
+      RCLCPP_INFO(this->get_logger(), "search_method DIRECT7 is selected");
+      ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT7);
+    } else {
+      RCLCPP_WARN(this->get_logger(), "invalid search method was given");
+    }
+    return ndt;
+  } else if (reg_method_.find("GICP") != std::string::npos) {
+    RCLCPP_INFO(this->get_logger(), "GICP is selected");
+    std::shared_ptr<fast_gicp::FastGICP<PointT, PointT>> ndt(
+        new fast_gicp::FastGICP<PointT, PointT>);
+    ndt->setNumThreads(4);
+    ndt->setCorrespondenceRandomness(20);
+    ndt->setTransformationEpsilon(1e-6);
+    ndt->setMaximumIterations(100);
+    return ndt;
+  }
+
   RCLCPP_ERROR_STREAM(this->get_logger(),
                       "unknown registration method:" << reg_method_);
   return nullptr;
@@ -192,6 +223,9 @@ void HdlLocalizationNode::initialize_params() {
 
   points_topic_ = this->get_parameter("points_topic").as_string();
   imu_topic_    = this->get_parameter("imu_topic").as_string();
+
+  enable_robot_odometry_prediction_ =
+      this->get_parameter("enable_robot_odometry_prediction").as_bool();
 
   // initialize pose estimator
   if (this->get_parameter("specify_init_pose").as_bool()) {
@@ -312,7 +346,7 @@ void HdlLocalizationNode::points_callback(
 
   // odometry-based prediction
   rclcpp::Time last_correction_time = pose_estimator_->last_correction_time();
-  if (this->get_parameter("enable_robot_odometry_prediction").as_bool() &&
+  if (enable_robot_odometry_prediction_ &&
       last_correction_time.nanoseconds() != 0) {
     geometry_msgs::msg::TransformStamped odom_delta;
     if (tf_buffer_.canTransform(
@@ -356,7 +390,7 @@ void HdlLocalizationNode::points_callback(
     publish_scan_matching_status(points_msg->header, aligned);
   }
 
-  publish_odometry(points_msg->header.stamp, pose_estimator_->matrix());
+  publish_odometry(stamp, pose_estimator_->matrix());
 }
 
 void HdlLocalizationNode::globalmap_callback(
@@ -373,29 +407,6 @@ void HdlLocalizationNode::globalmap_callback(
     auto request =
         std::make_shared<hdl_global_localization::srv::SetGlobalMap::Request>();
     pcl::toROSMsg(*globalmap_, request->global_map);
-
-    // auto callback =
-    //     [&](rclcpp::Client<hdl_global_localization::srv::SetGlobalMap>::
-    //             SharedFuture response_future) {
-    //       try {
-    //         auto response = response_future.get();
-    //         RCLCPP_INFO(this->get_logger(), "global map set successfully");
-    //       } catch (const std::exception &e) {
-    //         RCLCPP_ERROR(this->get_logger(), "failed to set global map");
-    //       }
-    //       response_received.store(true);
-    //     };
-
-    // auto future = set_global_map_client_->async_send_request(request,
-    // callback); auto start_time = std::chrono::steady_clock::now(); while
-    // (!response_received.load()) {
-    //   if (std::chrono::steady_clock::now() - start_time >
-    //       std::chrono::seconds(15)) {
-    //     RCLCPP_ERROR(this->get_logger(), "Service call timeout");
-    //     return;
-    //   }
-    //   std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    // }
 
     auto response =
         set_global_map_client_->invoke(request, std::chrono::seconds(15));
@@ -428,54 +439,68 @@ bool HdlLocalizationNode::relocalize(
       hdl_global_localization::srv::QueryGlobalLocalization::Request>();
   pcl::toROSMsg(*scan, request->cloud);
   request->max_num_candidates = 1;
+  try {
+    RCLCPP_INFO_STREAM(this->get_logger(), "querying global localization");
 
-  RCLCPP_INFO_STREAM(this->get_logger(), "querying global localization");
+    auto response = query_global_localization_client_->invoke(
+        request, std::chrono::seconds(15));
+    if (!response) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "failed to get global localization result");
+      return false;
+    }
+    const auto &result = response->poses[0];
 
-  auto response = query_global_localization_client_->invoke(
-      request, std::chrono::seconds(15));
-  if (!response) {
-    RCLCPP_ERROR(this->get_logger(),
-                 "failed to get global localization result");
+    RCLCPP_INFO_STREAM(this->get_logger(),
+                       "--- Global localization result ---");
+    RCLCPP_INFO_STREAM(this->get_logger(), "Trans :" << result.position.x << " "
+                                                     << result.position.y << " "
+                                                     << result.position.z);
+    RCLCPP_INFO_STREAM(
+        this->get_logger(),
+        "Quat  :" << result.orientation.x << " " << result.orientation.y << " "
+                  << result.orientation.z << " " << result.orientation.w);
+
+    Eigen::Isometry3f pose = Eigen::Isometry3f::Identity();
+    pose.linear() =
+        Eigen::Quaternionf(result.orientation.w, result.orientation.x,
+                           result.orientation.y, result.orientation.z)
+            .toRotationMatrix();
+    pose.translation() = Eigen::Vector3f(result.position.x, result.position.y,
+                                         result.position.z);
+    pose               = pose * delta_estimater_->estimated_delta();
+
+    {
+      std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+      pose_estimator_.reset(new hdl_localization::PoseEstimator(
+          registration_, pose.translation(), Eigen::Quaternionf(pose.linear()),
+          this->get_parameter("cool_time_duration").as_double()));
+    }
+
+    relocalizing_ = false;
+  } catch (const std::exception &e) {
+    RCLCPP_ERROR(this->get_logger(), "failed to relocalize: %s", e.what());
+    relocalizing_ = false;
     return false;
   }
-  const auto &result = response->poses[0];
-
-  RCLCPP_INFO_STREAM(this->get_logger(), "--- Global localization result ---");
-  RCLCPP_INFO_STREAM(this->get_logger(), "Trans :" << result.position.x << " "
-                                                   << result.position.y << " "
-                                                   << result.position.z);
-  RCLCPP_INFO_STREAM(
-      this->get_logger(),
-      "Quat  :" << result.orientation.x << " " << result.orientation.y << " "
-                << result.orientation.z << " " << result.orientation.w);
-
-  Eigen::Isometry3f pose = Eigen::Isometry3f::Identity();
-  pose.linear() = Eigen::Quaternionf(result.orientation.w, result.orientation.x,
-                                     result.orientation.y, result.orientation.z)
-                      .toRotationMatrix();
-  pose.translation() =
-      Eigen::Vector3f(result.position.x, result.position.y, result.position.z);
-  pose = pose * delta_estimater_->estimated_delta();
-
-  std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-  pose_estimator_.reset(new hdl_localization::PoseEstimator(
-      registration_, pose.translation(), Eigen::Quaternionf(pose.linear()),
-      this->get_parameter("cool_time_duration").as_double()));
-
-  relocalizing_ = false;
   return true;
 }
 
 void HdlLocalizationNode::initialpose_callback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr pose_msg) {
   RCLCPP_INFO(this->get_logger(), "initial pose received!!");
-  std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-  const auto                 &p = pose_msg->pose.pose.position;
-  const auto                 &q = pose_msg->pose.pose.orientation;
-  pose_estimator_.reset(new hdl_localization::PoseEstimator(
-      registration_, Eigen::Vector3f(p.x, p.y, p.z),
-      Eigen::Quaternionf(q.w, q.x, q.y, q.z),
-      this->get_parameter("cool_time_duration").as_double()));
+  relocalizing_ = true;
+  delta_estimater_->reset();
+  {
+    std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+    const auto                 &p = pose_msg->pose.pose.position;
+    const auto                 &q = pose_msg->pose.pose.orientation;
+    pose_estimator_.reset(new hdl_localization::PoseEstimator(
+        registration_, Eigen::Vector3f(p.x, p.y, p.z),
+        Eigen::Quaternionf(q.w, q.x, q.y, q.z),
+        this->get_parameter("cool_time_duration").as_double()));
+  }
+  relocalizing_ = false;
 }
 
 void HdlLocalizationNode::publish_scan_matching_status(

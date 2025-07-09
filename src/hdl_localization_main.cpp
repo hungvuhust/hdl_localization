@@ -7,8 +7,8 @@
 int main(int argc, char *argv[]) {
   rclcpp::init(argc, argv);
 
-  rclcpp::executors::MultiThreadedExecutor executor;
-  rclcpp::NodeOptions                      options;
+  rclcpp::executors::SingleThreadedExecutor executor;
+  rclcpp::NodeOptions                       options;
 
   RCLCPP_INFO(rclcpp::get_logger("main"),
               "Starting HDL Localization main executable");

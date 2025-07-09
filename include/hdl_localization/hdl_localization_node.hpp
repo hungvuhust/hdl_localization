@@ -78,6 +78,7 @@ private:
   bool        use_imu_;
   bool        invert_acc_;
   bool        invert_gyro_;
+  bool        enable_robot_odometry_prediction_;
   std::string points_topic_{"/livox/lidar"};
   std::string imu_topic_{"/livox/imu"};
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr         imu_sub_;
