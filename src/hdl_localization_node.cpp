@@ -3,6 +3,10 @@
 #include "fast_gicp/gicp/fast_vgicp.hpp"
 #include "rclcpp/callback_group.hpp"
 #include <rclcpp/qos.hpp>
+#include <small_gicp/pcl/pcl_point.hpp>
+#include <small_gicp/pcl/pcl_point_traits.hpp>
+#include <small_gicp/pcl/pcl_registration.hpp>
+#include <small_gicp/util/downsampling_omp.hpp>
 
 namespace hdl_localization {
 
@@ -167,6 +171,16 @@ HdlLocalizationNode::create_registration() {
     ndt->setCorrespondenceRandomness(20);
     ndt->setTransformationEpsilon(1e-6);
     ndt->setMaximumIterations(100);
+    return ndt;
+  } else if (reg_method_.find("GICP_PCL") != std::string::npos) {
+    RCLCPP_INFO(this->get_logger(), "GICP_PCL is selected");
+    std::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> ndt(
+        new small_gicp::RegistrationPCL<PointT, PointT>);
+    ndt->setNumThreads(8);
+    ndt->setCorrespondenceRandomness(40);
+    ndt->setMaxCorrespondenceDistance(1.0);
+    ndt->setVoxelResolution(1.0);
+    ndt->setRegistrationType("VGICP"); // or "GICP" (default = "GICP")
     return ndt;
   }
 
@@ -720,10 +734,13 @@ HdlLocalizationNode::downsample(
     return cloud;
   }
 
-  pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
-  downsample_filter_->setInputCloud(cloud);
-  downsample_filter_->filter(*filtered);
-  filtered->header = cloud->header;
+  // pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
+  // downsample_filter_->setInputCloud(cloud);
+  // downsample_filter_->filter(*filtered);
+  // filtered->header = cloud->header;
+
+  pcl::PointCloud<PointT>::Ptr filtered =
+      small_gicp::voxelgrid_sampling_omp(*cloud, 0.25);
 
   return filtered;
 }

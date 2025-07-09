@@ -18,11 +18,11 @@ hdl_localization_node:
     enable_robot_odometry_prediction: false
     
     # Algorithm parameters
-    reg_method: GICP
+    reg_method: GICP_PCL
     ndt_neighbor_search_method: DIRECT7
     ndt_neighbor_search_radius: 2.0
     ndt_resolution: 1.0
-    downsample_resolution: 0.1
+    downsample_resolution: 0.25
     cool_time_duration: 1.0
     
     # Initial pose

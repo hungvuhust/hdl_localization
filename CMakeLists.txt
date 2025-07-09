@@ -39,6 +39,7 @@ set(THIS_PACKAGE_DEPENDENCIES
   std_srvs
   ndt_omp
   fast_gicp
+  small_gicp
   hdl_global_localization
 )
 
@@ -85,6 +86,7 @@ ament_target_dependencies(hdl_localization_component
 )
 target_link_libraries(hdl_localization_component
   ${PCL_LIBRARIES}
+  OpenMP::OpenMP_CXX
 )
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(hdl_localization_component "${cpp_typesupport_target}")
