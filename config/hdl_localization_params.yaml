@@ -5,11 +5,11 @@ hdl_localization_node:
     imu_topic: /livox/imu
     
     # Frame IDs
-    odom_child_frame_id: base_link
+    odom_child_frame_id: livox_frame
     robot_odom_frame_id: odom
     
     # IMU settings
-    use_imu: false
+    use_imu: true
     invert_acc: false
     invert_gyro: false
     
@@ -18,12 +18,12 @@ hdl_localization_node:
     enable_robot_odometry_prediction: false
     
     # Algorithm parameters
-    reg_method: GICP
-    ndt_neighbor_search_method: DIRECT7
+    reg_method: GICP # NDT_OMP
+    ndt_neighbor_search_method: KDTREE
     ndt_neighbor_search_radius: 2.0
     ndt_resolution: 1.0
-    downsample_resolution: 0.1
-    cool_time_duration: 1.0
+    downsample_resolution: 0.15
+    cool_time_duration: 0.5
     
     # Initial pose
     specify_init_pose: true
@@ -40,6 +40,6 @@ hdl_localization_node:
 
 globalmap_server_node:
   ros__parameters:
-    globalmap_pcd: /home/rtc/ros2_ws/map/mapmoi/mapmoi.ply
+    globalmap_pcd: /home/hungvt14/glim_ws/map/mapmoi/map.ply
     convert_utm_to_local: true
     downsample_resolution: 0.1

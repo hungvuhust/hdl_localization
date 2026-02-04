@@ -14,6 +14,12 @@ def generate_launch_description():
     params_file = os.path.join(
         pkg_dir, 'config', 'hdl_localization_params.yaml')
 
+    hdl_global_localization = Node(
+        package='hdl_global_localization',
+        executable='hdl_global_localization_node',
+        output='screen'
+    )
+
     # Launch the main executable
     hdl_localization_main = Node(
         package='hdl_localization',
@@ -23,5 +29,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        hdl_global_localization,
         hdl_localization_main
     ])

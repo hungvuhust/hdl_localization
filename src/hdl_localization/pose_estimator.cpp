@@ -25,11 +25,11 @@ PoseEstimator::PoseEstimator(
   last_observation.block<3, 1>(0, 3) = pos;
 
   process_noise = Eigen::MatrixXf::Identity(16, 16);
-  process_noise.middleRows(0, 3) *= 1.0;
-  process_noise.middleRows(3, 3) *= 1.0;
+  process_noise.middleRows(0, 3) *= 2.0;
+  process_noise.middleRows(3, 3) *= 2.0;
   process_noise.middleRows(6, 4) *= 0.5;
-  process_noise.middleRows(10, 3) *= 1e-6;
-  process_noise.middleRows(13, 3) *= 1e-6;
+  process_noise.middleRows(10, 3) *= 1e-3;
+  process_noise.middleRows(13, 3) *= 1e-3;
 
   Eigen::MatrixXf measurement_noise = Eigen::MatrixXf::Identity(7, 7);
   measurement_noise.middleRows(0, 3) *= 0.01;
